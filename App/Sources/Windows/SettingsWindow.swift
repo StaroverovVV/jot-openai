@@ -304,7 +304,6 @@ struct DictationPane: View {
     @State private var cleanupPass = SettingsStore().smartCleanupPassEnabled
     @State private var showIdleDot = SettingsStore().showIdleIndicator
     @State private var noiseHandling = SettingsStore().experimentalNoiseHandling
-    @State private var liveTranscription = SettingsStore().liveTranscription
 
     var body: some View {
         Form {
@@ -323,7 +322,7 @@ struct DictationPane: View {
                         settings.setSmartTranscription(enabled)
                     }
             } footer: {
-                Text("Removes filler words and applies self-corrections (\"at 2 — actually 3\") as it transcribes. Off = word for word — unless tone matching below is on, which rewrites either way.")
+                Text("With Smart on, a second OpenAI model removes fillers and self-corrections. Off = verbatim, unless tone matching below is on. When text cleanup fails, Jot preserves the original transcript.")
             }
 
             Section {
@@ -336,43 +335,15 @@ struct DictationPane: View {
                     .onChange(of: noiseHandling) { _, enabled in
                         settings.setExperimentalNoiseHandling(enabled)
                     }
-                Toggle("Live transcription", isOn: $liveTranscription)
-                    .onChange(of: liveTranscription) { _, enabled in
-                        settings.setLiveTranscription(enabled)
-                        // Switching it on is an explicit "try again" — clear the
-                        // streak that suppressed it, but keep the history so the
-                        // footer still tells the truth about how it has gone.
-                        if enabled { LiveStats().clearStreak() }
-                    }
-                    // The legacy transport is a different endpoint entirely, so
-                    // live cannot run alongside it. Disabling the control says so;
-                    // leaving it tappable but inert is the exact silent no-op this
-                    // app keeps writing comments about.
-                    .disabled(settings.usesLegacyTranscribeEndpoint)
             } header: {
                 Text("Experimental")
             } footer: {
-                if settings.usesLegacyTranscribeEndpoint {
-                    Text("Live transcription is unavailable while the legacy transcription endpoint is on in Advanced.")
-                } else {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Tone runs a second model over the transcript so email reads like email and chat like chat — it adds about half a second and sends the transcript text once more. Loud rooms judges your voice against the actual room noise instead of a fixed level. Live streams your voice as you speak instead of uploading at the end — if the connection stumbles it quietly falls back to the normal upload, so nothing is ever lost. All off by default.")
-                        // Live failing is invisible by design — it just looks like
-                        // a slower dictation — so without this the question "is it
-                        // actually working?" has no answer.
-                        if let summary = LiveStats().summary {
-                            Text(summary)
-                        }
-                    }
-                }
+                Text("Tone matching uses OpenAI for a text cleanup pass. Better hearing in loud rooms is experimental. Live transcription is not yet available in this fork.")
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .gtSettingDidChange).receive(on: RunLoop.main)) { note in
             if note.object as? String == "smartTranscription" {
                 smartTranscription = settings.smartTranscriptionEnabled
-            }
-            if note.object as? String == "liveTranscription" {
-                liveTranscription = settings.liveTranscription
             }
             // Auto-degrade flips this one off after three gate trips, so a stale
             // ON toggle would make the user's next tap a silent no-op.
@@ -420,14 +391,14 @@ struct PrivacyPane: View {
             }
 
             Section {
-                LabeledContent("Audio") { Text("Sent to the Gemini API with your key") }
-                LabeledContent("Transcript text") { Text("Only if tone matching is on — otherwise it never leaves") }
-                LabeledContent("Dictionary terms") { Text("Sent with the audio, so names are spelled right as you speak") }
+                LabeledContent("Audio") { Text("Sent directly to the OpenAI API with your key") }
+                LabeledContent("Transcript text") { Text("Sent to OpenAI again when smart transcription or tone matching is on") }
+                LabeledContent("Dictionary terms") { Text("Sent as optional speech-recognition hints") }
                 LabeledContent("Everything else") { Text("Never leaves this Mac") }
             } header: {
                 Text("What leaves your Mac")
             } footer: {
-                Text("No middleman server, no account, no analytics, no screenshots, no keystroke logging. One network host.")
+                Text("No relay server or screenshots. Recording audio and optional cleaned transcripts go to api.openai.com. OpenAI API data policy applies.")
             }
 
             Section {
@@ -451,10 +422,9 @@ struct AdvancedPane: View {
     private let settings = SettingsStore()
     /// Placeholders derive from the REAL defaults — a hardcoded string went
     /// stale the day the preview model was retired (dogfood).
-    private static let defaultConfig = GeminiConfig()
+    private static let defaultConfig = OpenAIConfig()
     @State private var apiKey = ""
     @State private var keyStatus: KeyStatus = KeychainStore.loadAPIKey() == nil ? .missing : .stored
-    @State private var endpoint = SettingsStore().endpointOverride ?? ""
     @State private var transcribeModel = SettingsStore().transcribeModelOverride ?? ""
     @State private var cleanupModel = SettingsStore().cleanupModelOverride ?? ""
 
@@ -462,13 +432,7 @@ struct AdvancedPane: View {
 
     private var hasStoredKey: Bool { keyStatus == .stored || keyStatus == .valid || keyStatus == .savedOffline }
 
-    private var endpointLooksBroken: Bool {
-        // Same predicate the effective config uses — the warning and reality
-        // can never drift apart (SettingsStore.usableEndpointURL).
-        let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !trimmed.isEmpty && SettingsStore.usableEndpointURL(trimmed) == nil
-    }
-    @State private var legacyEndpoint = SettingsStore().usesLegacyTranscribeEndpoint
+    @State private var modelUnavailable = false
 
     var body: some View {
         Form {
@@ -489,6 +453,9 @@ struct AdvancedPane: View {
                         .font(JotUI.TypeScale.labelSmall())
                         .foregroundStyle(JotUI.Colors.error)
                 }
+                if modelUnavailable {
+                    Text("This API project may not have access to the selected transcription model.").foregroundStyle(JotUI.Colors.error)
+                }
                 if keyStatus == .savedOffline {
                     Text("You look offline — key saved; it'll be checked on your first dictation.")
                         .font(JotUI.TypeScale.labelSmall())
@@ -501,28 +468,16 @@ struct AdvancedPane: View {
                         Button("Remove Key…", role: .destructive) { removeKey() }
                     }
                     Spacer()
-                    Link("Get a key in Google AI Studio", destination: URL(string: "https://aistudio.google.com/apikey")!)
+                    Link("Get an OpenAI API key", destination: URL(string: "https://platform.openai.com/api-keys")!)
                         .font(JotUI.TypeScale.labelSmall())
                 }
             } header: {
-                Text("Gemini API key")
+                Text("OpenAI API key")
             } footer: {
-                Text("Stored in your Mac's Keychain and only ever sent to Google.")
+                Text("Stored in the Mac Keychain; OpenAI API billing is separate from your ChatGPT subscription.")
             }
 
             Section {
-                TextField("Endpoint", text: $endpoint,
-                          prompt: Text(Self.defaultConfig.endpoint.absoluteString))
-                    .font(JotUI.TypeScale.code)
-                    .onChange(of: endpoint) { _, value in
-                        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                        settings.setEndpointOverride(trimmed.isEmpty ? nil : trimmed)
-                    }
-                if endpointLooksBroken {
-                    Text("Not a valid http(s) URL — the default endpoint is being used.")
-                        .font(JotUI.TypeScale.labelSmall())
-                        .foregroundStyle(JotUI.Colors.error)
-                }
                 TextField("Transcription model", text: $transcribeModel,
                           prompt: Text(Self.defaultConfig.transcribeModel))
                     .font(JotUI.TypeScale.code)
@@ -540,17 +495,10 @@ struct AdvancedPane: View {
             } header: {
                 Text("Model overrides")
             } footer: {
-                Text("Preview models get renamed — override here if a model 404s. Leave blank for defaults — every edit saves as you type.")
+                Text("Defaults: gpt-transcribe for speech and gpt-6-luna for optional cleanup. Requests go only to https://api.openai.com.")
             }
 
-            Section {
-                Toggle("Use the previous transcription endpoint", isOn: $legacyEndpoint)
-                    .onChange(of: legacyEndpoint) { _, enabled in
-                        settings.setLegacyTranscribeEndpoint(enabled)
-                    }
-            } footer: {
-                Text("Jot transcribes through Gemini's newer interactions endpoint, which is what makes Smart transcription possible. If it starts misbehaving, this switches back to the older one — transcription still works, but it will be word-for-word and Smart transcription will have no effect.")
-            }
+
         }
         // Key saved elsewhere (onboarding, dev-file migration) while this pane is
         // open: refresh the badge — but never clobber in-flight feedback.
@@ -582,14 +530,15 @@ struct AdvancedPane: View {
         guard !key.isEmpty else { return }
         keyStatus = .validating
         Task {
-            let client = GeminiClient(apiKey: { key })
-            let check = await client.validateKey(endpoint: settings.geminiConfig.endpoint)
+            let client = OpenAIClient(apiKey: { key })
+            let check = await client.validateKey(model: settings.openAIConfig.transcribeModel)
             // Same rule as onboarding: a key the server REJECTED never gets
             // saved, but a check we simply could not perform must not wall the
             // user out. The distinction now comes from the response itself
             // instead of a reachability probe that false-negatives.
             switch check {
-            case .valid, .unreachable:
+            case .valid, .unreachable, .modelUnavailable:
+                if case .modelUnavailable = check { modelUnavailable = true }
                 if KeychainStore.saveAPIKey(key) {
                     apiKey = ""
                     keyStatus = check == .valid ? .valid : .savedOffline
@@ -637,7 +586,7 @@ struct AboutPane: View {
                     .accessibilityHidden(true)
             }
             VStack(spacing: 4) {
-                Text("Jot")
+                Text("Jot OpenAI")
                     .font(JotUI.TypeScale.display())
                     .foregroundStyle(JotUI.Colors.onSurface)
                 Text(version)
@@ -658,7 +607,7 @@ struct AboutPane: View {
             }
             .font(JotUI.TypeScale.body())
 
-            Text("Open source under the Apache License 2.0.\nThis is not an officially supported Google product.")
+            Text("Open source under the Apache License 2.0.\nIndependent fork. Not endorsed by OpenAI or Google.")
                 .font(JotUI.TypeScale.labelSmall())
                 .foregroundStyle(JotUI.Colors.onSurfaceVariant)
                 .multilineTextAlignment(.center)

@@ -63,6 +63,19 @@ public struct SettingsStore: Sendable {
         Self.set(done, forKey: "hasCompletedOnboarding")
     }
 
+    /// The OpenAI fork uses a separate config; original Gemini tests remain
+    /// in JotCore for upstream compatibility but are not used at runtime.
+    public var openAIConfig: OpenAIConfig {
+        var config = OpenAIConfig()
+        if let model = Self.defaults.string(forKey: "transcribeModelOverride"), !model.isEmpty {
+            config.transcribeModel = model
+        }
+        if let model = Self.defaults.string(forKey: "cleanupModelOverride"), !model.isEmpty {
+            config.cleanupModel = model
+        }
+        return config
+    }
+
     public var geminiConfig: GeminiConfig {
         var config = GeminiConfig()
         if let url = Self.usableEndpointURL(Self.defaults.string(forKey: "endpointOverride")) {

@@ -40,8 +40,8 @@ jobs:
       - name: Build (unsigned)
         run: |
           xcodebuild build \
-            -project Jot.xcodeproj \
-            -scheme Jot \
+            -project JotOpenAI.xcodeproj \
+            -scheme JotOpenAI \
             -configuration Debug \
             -destination 'platform=macOS' \
             CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO DEVELOPMENT_TEAM= \

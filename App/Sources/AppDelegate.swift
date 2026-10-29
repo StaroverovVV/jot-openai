@@ -22,7 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Single instance, always: two copies means two event taps, two pills,
         // and a race over the History DB. The newer instance defers.
-        let bundleID = Bundle.main.bundleIdentifier ?? "com.ammaar.jot"
+        let bundleID = Bundle.main.bundleIdentifier ?? "com.staroverov.jot-openai"
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
             .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
         if !others.isEmpty {
@@ -32,11 +32,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // The launch-triggering GURL Apple event arrives BETWEEN will- and
         // didFinishLaunching — registering in did- silently dropped any
-        // jot:// URL that cold-launched the app (production pass 2).
+        // jot-openai:// URL that cold-launched the app (production pass 2).
         registerURLHandler()
         // Before ANYTHING reads the Keychain, defaults, or History: carry over
         // everything from the app's pre-rename identity.
-        LegacyMigration.runIfNeeded()
+        // Fork: do NOT migrate the original Jot data or Keychain.
         // AFTER LegacyMigration: smartFormatting is in its key list and has to be
         // pulled out of the old defaults domain before this reads it.
         FormattingSettingsMigration.runIfNeeded()
@@ -71,7 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         controller.start()
         dictationController = controller
-        // Replay any jot:// URL that cold-launched the app.
+        // Replay any jot-openai:// URL that cold-launched the app.
         for url in pendingLaunchURLs { dispatch(url) }
         pendingLaunchURLs.removeAll()
         Log.session.info("Jot launched (build \(Bundle.main.buildNumber, privacy: .public))")
@@ -88,8 +88,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .terminateNow
     }
 
-    /// jot:// URL scheme — Raycast/Shortcuts automation + headless UI checks.
-    /// jot://settings[/general|dictation|privacy|advanced] | history | dictionary
+    /// jot-openai:// URL scheme — Raycast/Shortcuts automation + headless UI checks.
+    /// jot-openai://settings[/general|dictation|privacy|advanced] | history | dictionary
     ///   | onboarding | start-hands-free | stop
     /// NOTE: registered via NSAppleEventManager in didFinishLaunching — the
     /// NSApplicationDelegate application(_:open:) path is NOT delivered under the
@@ -139,7 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case "start-hands-free": self?.dictationController?.startHandsFree()
             case "stop": self?.dictationController?.coordinator.handle(.finalize)
             #if DEBUG
-            // jot://set/<key>/<true|false> — flips a boolean setting through
+            // jot-openai://set/<key>/<true|false> — flips a boolean setting through
             // the REAL SettingsStore setter (and its change notification), so the
             // live-update path can be exercised headlessly. Debug builds only.
             case "set":

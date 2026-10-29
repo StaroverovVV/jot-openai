@@ -24,7 +24,7 @@ public enum FileLayout {
     public static var appSupportRoot: URL {
         if let overrideRoot { return overrideRoot }
         return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Jot", isDirectory: true)
+            .appendingPathComponent("Jot OpenAI", isDirectory: true)
     }
 
     public static var recordingsRoot: URL {

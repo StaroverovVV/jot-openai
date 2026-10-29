@@ -369,7 +369,7 @@ private struct APIKeyScreen: View {
     private var showingField: Bool { !storedKeyExists || replacing }
 
     var body: some View {
-        ScreenScaffold("Bring your own key.", "Jot uses your Gemini API key. It's stored in your Mac's Keychain and only ever sent to Google.") {
+        ScreenScaffold("Bring your own key.", "Jot OpenAI sends dictation audio to OpenAI. Its separate API key is stored in your Mac Keychain; usage is billed separately from ChatGPT.") {
             VStack(spacing: JotUI.Spacing.s) {
                 if !showingField {
                     Label("Key already in your Keychain", systemImage: "checkmark.circle.fill")
@@ -394,7 +394,7 @@ private struct APIKeyScreen: View {
                         .frame(width: 320)
                     if failed {
                         Text(rejection.map { "That key was rejected: \($0)" }
-                             ?? "That key didn't work — check it in AI Studio.")
+                             ?? "That key didn't work — check your OpenAI API key.")
                             .font(JotUI.TypeScale.labelSmall())
                             .foregroundStyle(JotUI.Colors.error)
                             .multilineTextAlignment(.center)
@@ -402,7 +402,7 @@ private struct APIKeyScreen: View {
                             .frame(maxWidth: 320)
                     }
                     if unverified {
-                        Text("Couldn't reach Google to check this key — saved it anyway. Your first dictation will tell you for sure.")
+                        Text("Couldn't reach OpenAI to check this key — saved it anyway. Your first dictation will tell you for sure.")
                             .font(JotUI.TypeScale.labelSmall())
                             .foregroundStyle(JotUI.Colors.onSurfaceVariant)
                             .multilineTextAlignment(.center)
@@ -421,7 +421,7 @@ private struct APIKeyScreen: View {
                             .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    Link("Get a key in Google AI Studio", destination: URL(string: "https://aistudio.google.com/apikey")!)
+                    Link("Get an OpenAI API key", destination: URL(string: "https://platform.openai.com/api-keys")!)
                         .font(JotUI.TypeScale.labelSmall())
                 }
                 if validating {
@@ -455,28 +455,16 @@ private struct APIKeyScreen: View {
         rejection = nil
         unverified = false
         Task {
-            let client = GeminiClient(apiKey: { candidate })
-            let check = await client.validateKey(endpoint: SettingsStore().geminiConfig.endpoint)
-
+            let client = OpenAIClient(apiKey: { candidate })
+            let check = await client.validateKey(model: SettingsStore().openAIConfig.transcribeModel)
             if case .rejected(let detail) = check {
-                // The server answered and said no. This is the case that used to
-                // slip through: validateKey returned a bare false, and a
-                // false-negative from a 1s reachability probe sent it down the
-                // "offline, save anyway" path — which then stored the bad key and
-                // advanced, with no way back to this screen.
                 rejection = detail
                 failed = true
                 validating = false
                 return
             }
-
-            if check == .valid {
-                // "Your key works" must mean dictation works. Check the model
-                // Jot actually ships on — and only report, never substitute.
-                let config = SettingsStore().geminiConfig
-                noModelAccess = await client.resolveAvailableModel(
-                    from: [config.transcribeModel], endpoint: config.endpoint
-                ) == nil
+            if case .modelUnavailable = check {
+                noModelAccess = true
             }
             unverified = (check == .unreachable)
 
