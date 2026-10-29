@@ -6,6 +6,24 @@ import XCTest
 private final class OpenAIProtocolStub: URLProtocol {
     static var handler: ((URLRequest) throws -> (Int, Data))?
 
+    /// URLSession transforms URLRequest.httpBody into httpBodyStream for
+    /// custom URLProtocol implementations. The real network upload is fine;
+    /// tests must inspect the stream instead of falsely reading an empty body.
+    static func data(for request: URLRequest) -> Data {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return Data() }
+        stream.open()
+        defer { stream.close() }
+        var output = Data()
+        var buffer = [UInt8](repeating: 0, count: 8192)
+        while true {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            if count <= 0 { break }
+            output.append(contentsOf: buffer.prefix(count))
+        }
+        return output
+    }
+
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
@@ -42,7 +60,7 @@ final class OpenAIClientTests: XCTestCase {
             XCTAssertEqual(request.url?.absoluteString, "https://api.openai.com/v1/audio/transcriptions")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer unit-test-only")
             XCTAssertTrue((request.value(forHTTPHeaderField: "Content-Type") ?? "").hasPrefix("multipart/form-data; boundary="))
-            let body = request.httpBody ?? Data()
+            let body = OpenAIProtocolStub.data(for: request)
             XCTAssertTrue(body.range(of: marker) != nil, "Must upload real audio bytes, not just filename")
             let string = String(decoding: body, as: UTF8.self)
             XCTAssertTrue(string.contains("name=\"model\""))
@@ -85,7 +103,7 @@ final class OpenAIClientTests: XCTestCase {
         OpenAIProtocolStub.handler = { request in
             XCTAssertEqual(request.url?.absoluteString, "https://api.openai.com/v1/responses")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer unit-test-only")
-            let body = try JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as! [String: Any]
+            let body = try JSONSerialization.jsonObject(with: OpenAIProtocolStub.data(for: request)) as! [String: Any]
             XCTAssertEqual(body["model"] as? String, "gpt-6-luna")
             XCTAssertEqual(body["store"] as? Bool, false)
             return (200, Data(#"{"output":[{"type":"message","content":[{"type":"output_text","text":"Встреча в четверг."}]}]}"#.utf8))
