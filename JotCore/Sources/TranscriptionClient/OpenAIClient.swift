@@ -83,9 +83,13 @@ public actor OpenAIClient {
 
         field("model", model)
         field("response_format", "json")
+        // CRLF is a single extended grapheme cluster in Swift, so a String
+        // Character check for "\r\n" does not reject a standalone LF.
+        // Check Unicode scalars explicitly to reject all newlines and angle brackets.
+        let invalidScalars = CharacterSet.newlines.union(CharacterSet(charactersIn: "<>"))
         let hints = vocabulary
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty && !$0.contains(where: { "\r\n<>".contains($0) }) }
+            .filter { !$0.isEmpty && !$0.unicodeScalars.contains(where: { invalidScalars.contains($0) }) }
             .prefix(100)
         if !hints.isEmpty {
             field("prompt", "Dictation, often in Russian and English. Preserve technical names, acronyms and the original language.")
