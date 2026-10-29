@@ -16,7 +16,7 @@ import os
 
 /// Central loggers, one per subsystem area. Subsystem matches the app bundle id.
 public enum Log {
-    public static let subsystem = "com.ammaar.jot"
+    public static let subsystem = "com.staroverov.jot-openai"
 
     public static let session = Logger(subsystem: subsystem, category: "session")
     public static let hotkey = Logger(subsystem: subsystem, category: "hotkey")
